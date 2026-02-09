@@ -151,16 +151,43 @@ def evaluate(model, dataset, args):
             if idx == -1: break
         rated = set(train[u])
         rated.add(0)
-        item_idx = [test[u][0]]
-        for _ in range(100):
-            t = np.random.randint(1, itemnum + 1)
-            while t in rated: t = np.random.randint(1, itemnum + 1)
-            item_idx.append(t)
+        
+        # [修改 1] 建立全量商品列表 (1 到 itemnum)
+        #item_idx = [test[u][0]]
+        item_idx = list(range(1, itemnum + 1))
+        
+        # [修改 2] 預測所有商品的分數
+        # 注意: 如果顯卡記憶體(VRAM)不足，這裡可能需要分批(batch)預測，但通常 datasets 不大時可直接跑
+        predictions = -model.predict(*[np.array(l) for l in [[u], [seq], item_idx]])
+        predictions = predictions[0] # 取得 (itemnum,) 的分數陣列
+        
+        # [修改 3] 取得目標商品(Ground Truth)的分數與索引
+        target_item = test[u][0]
+        target_item_idx = target_item - 1 # 因為 item_idx 是從 1 開始，對應到 array index 要減 1
+        target_score = predictions[target_item_idx]
+        
+        # [修改 4] Masking (遮蔽): 將訓練集出現過的商品分數設為無限大 (代表表現最差)
+        # 因為 predictions 是負的 logits (越小越好)，所以設為 np.inf 讓它排到最後面
+        for item in rated:
+            if item != target_item: # 當然不能遮蔽掉正確答案
+                predictions[item - 1] = np.inf
+                
+        # for _ in range(100):
+        #     t = np.random.randint(1, itemnum + 1)
+        #     while t in rated: t = np.random.randint(1, itemnum + 1)
+        #     item_idx.append(t)
+
 
         predictions = -model.predict(*[np.array(l) for l in [[u], [seq], item_idx]])
         predictions = predictions[0] # - for 1st argsort DESC
 
-        rank = predictions.argsort().argsort()[0].item()
+        # [修改 5] 計算排名
+        # 方法 A: 使用 argsort (較慢但直觀)
+        # rank = predictions.argsort().argsort()[target_item_idx].item()
+        
+        # 方法 B: 直接計算有多少個商品的分數優於(小於)目標商品 (較快)
+        rank = (predictions < target_score).sum().item()
+        # rank = predictions.argsort().argsort()[0].item()
 
         valid_user += 1
 
