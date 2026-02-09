@@ -51,7 +51,8 @@ if __name__ == '__main__':
     print('average sequence length: %.2f' % (cc / len(user_train)))
     
     f = open(os.path.join(args.dataset + '_' + args.train_dir, 'log.txt'), 'w')
-    f.write('epoch (val_ndcg, val_hr) (test_ndcg, test_hr)\n')
+    # f.write('epoch (val_ndcg, val_hr) (test_ndcg, test_hr)\n')
+    f.write('epoch val_NDCG@5 val_HR@5 val_NDCG@10 val_HR@10 val_NDCG@20 val_HR@20 test_NDCG@5 test_HR@5 test_NDCG@10 test_HR@10 test_NDCG@20 test_HR@20\n')
     
     sampler = WarpSampler(user_train, usernum, itemnum, batch_size=args.batch_size, maxlen=args.maxlen, n_workers=3)
     model = SASRec(usernum, itemnum, args).to(args.device) # no ReLU activation in original SASRec implementation?
@@ -121,22 +122,49 @@ if __name__ == '__main__':
             t1 = time.time() - t0
             T += t1
             print('Evaluating', end='')
+            
+            # 取得評估結果 (現在是字典)
             t_test = evaluate(model, dataset, args)
             t_valid = evaluate_valid(model, dataset, args)
-            print('epoch:%d, time: %f(s), valid (NDCG@10: %.4f, HR@10: %.4f), test (NDCG@10: %.4f, HR@10: %.4f)'
-                    % (epoch, T, t_valid[0], t_valid[1], t_test[0], t_test[1]))
+            
+            # [修改] 定義一個小函數來格式化輸出字串
+            def get_metric_str(metrics):
+                ndcg, hr = metrics
+                # 產生類似 "N@5:0.123, H@5:0.200 | N@10:..." 的字串
+                return " | ".join([f"N@{k}:{ndcg[k]:.4f} H@{k}:{hr[k]:.4f}" for k in [5, 10, 20]])
 
-            if t_valid[0] > best_val_ndcg or t_valid[1] > best_val_hr or t_test[0] > best_test_ndcg or t_test[1] > best_test_hr:
-                best_val_ndcg = max(t_valid[0], best_val_ndcg)
-                best_val_hr = max(t_valid[1], best_val_hr)
-                best_test_ndcg = max(t_test[0], best_test_ndcg)
-                best_test_hr = max(t_test[1], best_test_hr)
+            print(f'\nEpoch: {epoch}, Time: {T:.2f}s')
+            print(f'Valid: {get_metric_str(t_valid)}')
+            print(f'Test:  {get_metric_str(t_test)}')
+            
+            # [修改] 儲存最佳模型邏輯
+            # 這裡我們通常選定一個主要指標 (例如 NDCG@10) 來決定是否儲存 Best Model
+            current_val_score = t_valid[0][10] + t_valid[1][10] # NDCG@10 + HR@10
+            best_val_score = best_val_ndcg + best_val_hr # 這是舊變數，你可以自己調整邏輯
+            
+            
+            # 為了相容原本的變數名，我們這裡簡單更新
+            if t_valid[0][10] > best_val_ndcg or t_valid[1][10] > best_val_hr:
+                best_val_ndcg = max(t_valid[0][10], best_val_ndcg)
+                best_val_hr = max(t_valid[1][10], best_val_hr)
+                # ... 這裡保留原本的 torch.save 邏輯 ...
                 folder = args.dataset + '_' + args.train_dir
                 fname = 'SASRec.epoch={}.lr={}.layer={}.head={}.hidden={}.maxlen={}.pth'
                 fname = fname.format(epoch, args.lr, args.num_blocks, args.num_heads, args.hidden_units, args.maxlen)
                 torch.save(model.state_dict(), os.path.join(folder, fname))
 
-            f.write(str(epoch) + ' ' + str(t_valid) + ' ' + str(t_test) + '\n')
+            # [修改] 寫入 log 檔 (轉成字串即可)
+            #f.write(str(epoch) + ' ' + str(t_valid) + ' ' + str(t_test) + '\n')
+            # [建議修改] 將字典格式化為易讀的字串寫入 log
+            # 格式範例: epoch val_NDCG@5 val_HR@5 val_NDCG@10 ... test_NDCG@5 ...
+            
+            log_str = f"{epoch}"
+            for k in [5, 10, 20]:
+                log_str += f" {t_valid[0][k]:.4f} {t_valid[1][k]:.4f}" # Valid NDCG, HR
+            for k in [5, 10, 20]:
+                log_str += f" {t_test[0][k]:.4f} {t_test[1][k]:.4f}"   # Test NDCG, HR
+            
+            f.write(log_str + '\n')
             f.flush()
             t0 = time.time()
             model.train()

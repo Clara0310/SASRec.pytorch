@@ -125,8 +125,143 @@ def data_partition(fname):
     return [user_train, user_valid, user_test, usernum, itemnum]
 
 # TODO: merge evaluate functions for test and val set
-# evaluate on test set
+
+# ---------------------------------------------------------
+# 請將這段程式碼覆蓋原本 python/utils.py 中的 evaluate 和 evaluate_valid
+# ---------------------------------------------------------
+
 def evaluate(model, dataset, args):
+    [train, valid, test, usernum, itemnum] = copy.deepcopy(dataset)
+
+    # [修改] 定義我們要評估的 K 值列表
+    Ks = [5, 10, 20]
+    
+    # [修改] 使用字典來儲存不同 K 的結果
+    NDCG = {k: 0.0 for k in Ks}
+    HT = {k: 0.0 for k in Ks}
+    
+    valid_user = 0.0
+
+    if usernum > 10000:
+        users = random.sample(range(1, usernum + 1), 10000)
+    else:
+        users = range(1, usernum + 1)
+        
+    # [修改] 全排名需要所有商品的列表 (1 ~ itemnum)
+    all_item_idx = list(range(1, itemnum + 1))
+
+    for u in users:
+        if len(train[u]) < 1 or len(test[u]) < 1: continue
+
+        seq = np.zeros([args.maxlen], dtype=np.int32)
+        idx = args.maxlen - 1
+        # Test 階段：輸入序列包含 Train + Valid
+        seq[idx] = valid[u][0]
+        idx -= 1
+        for i in reversed(train[u]):
+            seq[idx] = i
+            idx -= 1
+            if idx == -1: break
+            
+        rated = set(train[u])
+        rated.add(0)
+        rated.add(valid[u][0]) # Test 時，Valid 也是已知歷史，需加入 rated 避免被當成負樣本 (視你的實驗設定而定，通常建議加)
+        
+        # [修改] 全排名預測
+        # 輸入 [u], [seq], [所有商品]
+        predictions = -model.predict(*[np.array(l) for l in [[u], [seq], all_item_idx]])
+        predictions = predictions[0] # 取得所有商品的分數向量
+
+        # 取得正確答案的商品 ID 與其分數
+        target_item = test[u][0]
+        target_score = predictions[target_item - 1] # item_idx 是 1-based，轉 array index 需 -1
+
+        # [修改] Masking: 將歷史買過的商品分數設為無限大 (代表排名最後)
+        for i in rated:
+            if i != target_item:
+                predictions[i - 1] = np.inf
+        
+        # [修改] 計算排名 (有多少個商品分數比正確答案好/更小)
+        rank = (predictions < target_score).sum().item()
+
+        valid_user += 1
+
+        # [修改] 針對每個 K 計算指標
+        for k in Ks:
+            if rank < k:
+                NDCG[k] += 1 / np.log2(rank + 2)
+                HT[k] += 1
+                
+        if valid_user % 100 == 0:
+            print('.', end="")
+            sys.stdout.flush()
+
+    # [修改] 回傳字典
+    return {k: NDCG[k] / valid_user for k in Ks}, {k: HT[k] / valid_user for k in Ks}
+
+
+def evaluate_valid(model, dataset, args):
+    [train, valid, test, usernum, itemnum] = copy.deepcopy(dataset)
+
+    Ks = [5, 10, 20]
+    NDCG = {k: 0.0 for k in Ks}
+    HT = {k: 0.0 for k in Ks}
+    valid_user = 0.0
+
+    if usernum > 10000:
+        users = random.sample(range(1, usernum + 1), 10000)
+    else:
+        users = range(1, usernum + 1)
+        
+    all_item_idx = list(range(1, itemnum + 1))
+
+    for u in users:
+        if len(train[u]) < 1 or len(valid[u]) < 1: continue
+
+        seq = np.zeros([args.maxlen], dtype=np.int32)
+        idx = args.maxlen - 1
+        # Valid 階段：輸入序列只包含 Train
+        for i in reversed(train[u]):
+            seq[idx] = i
+            idx -= 1
+            if idx == -1: break
+
+        rated = set(train[u])
+        rated.add(0)
+        
+        predictions = -model.predict(*[np.array(l) for l in [[u], [seq], all_item_idx]])
+        predictions = predictions[0]
+
+        target_item = valid[u][0]
+        target_score = predictions[target_item - 1]
+
+        for i in rated:
+            if i != target_item:
+                predictions[i - 1] = np.inf
+
+        rank = (predictions < target_score).sum().item()
+
+        valid_user += 1
+
+        for k in Ks:
+            if rank < k:
+                NDCG[k] += 1 / np.log2(rank + 2)
+                HT[k] += 1
+                
+        if valid_user % 100 == 0:
+            print('.', end="")
+            sys.stdout.flush()
+
+    return {k: NDCG[k] / valid_user for k in Ks}, {k: HT[k] / valid_user for k in Ks}
+
+
+
+
+
+
+
+# evaluate on test set
+# def evaluate(model, dataset, args):
     [train, valid, test, usernum, itemnum] = copy.deepcopy(dataset)
 
     NDCG = 0.0
@@ -202,7 +337,7 @@ def evaluate(model, dataset, args):
 
 
 # evaluate on val set
-def evaluate_valid(model, dataset, args):
+# def evaluate_valid(model, dataset, args):
     [train, valid, test, usernum, itemnum] = copy.deepcopy(dataset)
 
     NDCG = 0.0
