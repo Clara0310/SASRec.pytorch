@@ -1,3 +1,9 @@
 .DS_Store
 __pycache__/
 *_default/
+
+#虛擬環境
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
